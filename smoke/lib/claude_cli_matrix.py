@@ -1,7 +1,5 @@
 """Claude Code CLI characterization helpers for provider smoke matrices."""
 
-from __future__ import annotations
-
 import json
 import os
 import re
@@ -12,6 +10,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from free_claude_code.cli.claude_env import build_claude_proxy_env
 from smoke.lib.child_process import run_captured_text
 from smoke.lib.config import ProviderModel, SmokeConfig, redacted
 from smoke.lib.server import RunningServer
@@ -119,14 +118,11 @@ def run_claude_cli(
         )
     )
 
-    env = os.environ.copy()
-    env["ANTHROPIC_BASE_URL"] = server.base_url
-    env["ANTHROPIC_API_URL"] = f"{server.base_url}/v1"
-    env.pop("ANTHROPIC_API_KEY", None)
-    if config.settings.anthropic_auth_token:
-        env["ANTHROPIC_AUTH_TOKEN"] = config.settings.anthropic_auth_token
-    else:
-        env.pop("ANTHROPIC_AUTH_TOKEN", None)
+    env = build_claude_proxy_env(
+        proxy_root_url=server.base_url,
+        auth_token=config.settings.anthropic_auth_token,
+        base_env=os.environ,
+    )
     env["TERM"] = "dumb"
     env["NO_COLOR"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
@@ -698,7 +694,7 @@ def _has_proxy_request(log_delta: str) -> bool:
     return (
         "POST /v1/messages" in log_delta
         or "API_REQUEST:" in log_delta
-        or '"event": "api.request.received"' in log_delta
+        or '"event": "free_claude_code.api.request.received"' in log_delta
         or (
             '"http_method": "POST"' in log_delta
             and '"http_path": "/v1/messages"' in log_delta
@@ -764,7 +760,9 @@ def _has_upstream_unavailable_text(text: str) -> bool:
 def _request_count(log_delta: str) -> int:
     access_log_count = log_delta.count("POST /v1/messages")
     service_log_count = log_delta.count("API_REQUEST:")
-    structured_log_count = log_delta.count('"event": "api.request.received"')
+    structured_log_count = log_delta.count(
+        '"event": "free_claude_code.api.request.received"'
+    )
     return max(access_log_count, service_log_count, structured_log_count)
 
 

@@ -1,15 +1,13 @@
-from __future__ import annotations
-
 import os
 
 import pytest
 
-from config.provider_catalog import PROVIDER_CATALOG
-from config.settings import Settings
-from messaging.platforms.factory import create_messaging_components
-from providers.runtime import build_provider_config
+from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
+from free_claude_code.config.settings import Settings
+from free_claude_code.messaging.platforms.factory import create_messaging_components
+from free_claude_code.providers.runtime import build_provider_config
 from smoke.lib.child_process import (
-    cmd_free_claude_code_serve,
+    cmd_fcc_server,
     cmd_python_c,
     run_captured_text,
 )
@@ -31,7 +29,7 @@ def test_env_precedence_e2e(smoke_config: SmokeConfig, tmp_path) -> None:
     env["MODEL"] = "nvidia_nim/process-model"
     env["ANTHROPIC_AUTH_TOKEN"] = "process-token"
     script = (
-        "from config.settings import get_settings; "
+        "from free_claude_code.config.settings import get_settings; "
         "s=get_settings(); "
         "print(s.model); print(s.anthropic_auth_token)"
     )
@@ -54,7 +52,9 @@ def test_removed_env_migration_e2e(smoke_config: SmokeConfig, tmp_path) -> None:
     env = os.environ.copy()
     env["FCC_ENV_FILE"] = str(env_file)
     result = run_captured_text(
-        cmd_python_c("from config.settings import Settings; Settings()"),
+        cmd_python_c(
+            "from free_claude_code.config.settings import Settings; Settings()"
+        ),
         cwd=smoke_config.root,
         env=env,
         timeout=smoke_config.timeout_s,
@@ -64,26 +64,28 @@ def test_removed_env_migration_e2e(smoke_config: SmokeConfig, tmp_path) -> None:
 
 
 @pytest.mark.smoke_target("config")
-def test_per_model_thinking_config_e2e(smoke_config: SmokeConfig, tmp_path) -> None:
+def test_route_reasoning_config_e2e(smoke_config: SmokeConfig, tmp_path) -> None:
     env_file = tmp_path / "thinking.env"
     env_file.write_text(
-        'ENABLE_MODEL_THINKING="false"\n'
-        'ENABLE_OPUS_THINKING="true"\n'
-        "ENABLE_SONNET_THINKING=\n"
-        'ENABLE_HAIKU_THINKING="false"\n',
+        'REASONING_POLICY="off"\n'
+        'REASONING_FABLE="high"\n'
+        'REASONING_OPUS="client"\n'
+        'REASONING_SONNET="inherit"\n'
+        'REASONING_HAIKU="off"\n',
         encoding="utf-8",
     )
     env = os.environ.copy()
     env["FCC_ENV_FILE"] = str(env_file)
     script = (
-        "from api.model_router import ModelRouter; "
-        "from config.settings import Settings; "
+        "from free_claude_code.application.routing import ModelRouter; "
+        "from free_claude_code.config.settings import Settings; "
         "s=Settings(); "
         "r=ModelRouter(s); "
-        "print(r.resolve('claude-opus-4-20250514').thinking_enabled); "
-        "print(r.resolve('claude-sonnet-4-20250514').thinking_enabled); "
-        "print(r.resolve('claude-haiku-4-20250514').thinking_enabled); "
-        "print(r.resolve('unknown-model').thinking_enabled)"
+        "print(r.resolve('claude-fable-5').reasoning_preference.value); "
+        "print(r.resolve('claude-opus-4-20250514').reasoning_preference.value); "
+        "print(r.resolve('claude-sonnet-4-20250514').reasoning_preference.value); "
+        "print(r.resolve('claude-haiku-4-20250514').reasoning_preference.value); "
+        "print(r.resolve('unknown-model').reasoning_preference.value)"
     )
     result = run_captured_text(
         cmd_python_c(script),
@@ -93,7 +95,13 @@ def test_per_model_thinking_config_e2e(smoke_config: SmokeConfig, tmp_path) -> N
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines() == ["True", "False", "False", "False"]
+    assert result.stdout.splitlines() == [
+        "high",
+        "client",
+        "off",
+        "off",
+        "off",
+    ]
 
 
 @pytest.mark.smoke_target("config")
@@ -111,9 +119,9 @@ def test_proxy_timeout_config_e2e(smoke_config: SmokeConfig, tmp_path) -> None:
     env = os.environ.copy()
     env["FCC_ENV_FILE"] = str(env_file)
     script = (
-        "from config.settings import Settings; "
-        "from config.provider_catalog import PROVIDER_CATALOG; "
-        "from providers.runtime import build_provider_config; "
+        "from free_claude_code.config.settings import Settings; "
+        "from free_claude_code.config.provider_catalog import PROVIDER_CATALOG; "
+        "from free_claude_code.providers.runtime import build_provider_config; "
         "s=Settings(); c=build_provider_config(PROVIDER_CATALOG['open_router'], s); "
         "print(c.proxy); print(c.http_read_timeout); "
         "print(c.http_connect_timeout); print(c.http_write_timeout)"
@@ -170,7 +178,7 @@ def test_entrypoint_server_e2e(smoke_config: SmokeConfig) -> None:
     with SmokeServerDriver(
         smoke_config,
         name="product-entrypoint",
-        command=cmd_free_claude_code_serve(),
+        command=cmd_fcc_server(),
         env_overrides={"MESSAGING_PLATFORM": "none"},
     ).run() as server:
         assert server.process.poll() is None

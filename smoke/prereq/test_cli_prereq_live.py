@@ -1,14 +1,12 @@
-from __future__ import annotations
-
 import os
 import shutil
 from pathlib import Path
 
 import pytest
 
+from free_claude_code.cli.claude_env import build_claude_proxy_env
 from smoke.lib.child_process import (
-    cmd_fcc_init,
-    cmd_free_claude_code_serve,
+    cmd_fcc_server,
     run_captured_text,
 )
 from smoke.lib.config import SmokeConfig
@@ -18,27 +16,10 @@ from smoke.lib.skips import skip_upstream_unavailable
 pytestmark = [pytest.mark.live, pytest.mark.smoke_target("cli")]
 
 
-def test_fcc_init_scaffolds_user_config(
-    smoke_config: SmokeConfig, tmp_path: Path
-) -> None:
-    env = os.environ.copy()
-    env["HOME"] = str(tmp_path)
-    env["USERPROFILE"] = str(tmp_path)
-    result = run_captured_text(
-        cmd_fcc_init(),
-        cwd=smoke_config.root,
-        env=env,
-        timeout=smoke_config.timeout_s,
-        check=False,
-    )
-    assert result.returncode == 0, result.stderr or result.stdout
-    assert (tmp_path / ".fcc" / ".env").is_file()
-
-
-def test_free_claude_code_entrypoint_starts_server(smoke_config: SmokeConfig) -> None:
+def test_fcc_server_entrypoint_starts_server(smoke_config: SmokeConfig) -> None:
     with start_server(
         smoke_config,
-        command=cmd_free_claude_code_serve(),
+        command=cmd_fcc_server(),
         env_overrides={"MESSAGING_PLATFORM": "none"},
         name="entrypoint",
     ) as server:
@@ -60,10 +41,11 @@ def test_claude_cli_prompt_when_available(
         env_overrides={"MODEL": models[0].full_model, "MESSAGING_PLATFORM": "none"},
         name="claude-cli",
     ) as server:
-        env = os.environ.copy()
-        env["ANTHROPIC_BASE_URL"] = server.base_url
-        if smoke_config.settings.anthropic_auth_token:
-            env["ANTHROPIC_AUTH_TOKEN"] = smoke_config.settings.anthropic_auth_token
+        env = build_claude_proxy_env(
+            proxy_root_url=server.base_url,
+            auth_token=smoke_config.settings.anthropic_auth_token,
+            base_env=os.environ,
+        )
         result = run_captured_text(
             [claude_bin, "-p", "Reply with exactly FCC_SMOKE_PONG"],
             cwd=tmp_path,
@@ -73,6 +55,9 @@ def test_claude_cli_prompt_when_available(
         )
         server_log = server.log_path.read_text(encoding="utf-8", errors="replace")
     assert result.returncode == 0, result.stderr or result.stdout
+    assert "GET /v1/models" in server_log, (
+        "Claude CLI did not discover models from the local gateway"
+    )
     assert "POST /v1/messages" in server_log, (
         "Claude CLI did not call the local Anthropic-compatible endpoint"
     )

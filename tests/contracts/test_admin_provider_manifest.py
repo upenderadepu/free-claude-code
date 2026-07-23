@@ -1,10 +1,8 @@
 """Ensure admin UI manifest exposes every catalog credential/proxy binding."""
 
-from __future__ import annotations
-
-from api.admin_config.manifest import FIELD_BY_KEY
-from config.provider_catalog import PROVIDER_CATALOG
-from config.settings import Settings
+from free_claude_code.config.admin.manifest import FIELD_BY_KEY
+from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
+from free_claude_code.config.settings import Settings
 
 
 def test_provider_catalog_remote_credentials_in_admin_manifest() -> None:
@@ -35,7 +33,7 @@ def test_provider_catalog_remote_credentials_in_admin_manifest() -> None:
     assert not missing and not wrong_attr, "\n".join(missing + wrong_attr)
 
 
-def test_provider_catalog_local_base_urls_in_admin_manifest() -> None:
+def test_provider_catalog_base_urls_in_admin_manifest() -> None:
     missing_key: list[str] = []
     wrong_attr: list[str] = []
 
@@ -98,15 +96,19 @@ def test_provider_catalog_proxy_attrs_in_admin_manifest() -> None:
 
 
 def test_provider_catalog_display_names_are_admin_status_source() -> None:
-    from api.admin_config.status import provider_config_status
+    from free_claude_code.config.admin.status import provider_config_status
+    from free_claude_code.config.admin.values import load_value_state
 
     status_by_provider = {
-        entry["provider_id"]: entry for entry in provider_config_status()
+        entry["provider_id"]: entry
+        for entry in provider_config_status(load_value_state())
     }
 
     assert set(status_by_provider) == set(PROVIDER_CATALOG)
     for provider_id, desc in PROVIDER_CATALOG.items():
         assert status_by_provider[provider_id]["display_name"] == desc.display_name
+        expected_kind = "local" if desc.local else "remote"
+        assert status_by_provider[provider_id]["kind"] == expected_kind
 
 
 def test_cloudflare_account_id_is_admin_provider_field() -> None:
@@ -115,3 +117,32 @@ def test_cloudflare_account_id_is_admin_provider_field() -> None:
     assert entry.settings_attr == "cloudflare_account_id"
     assert entry.section_id == "providers"
     assert entry.secret is False
+
+
+def test_vertex_project_and_location_are_admin_provider_fields() -> None:
+    project = FIELD_BY_KEY["VERTEX_PROJECT_ID"]
+    location = FIELD_BY_KEY["VERTEX_LOCATION"]
+
+    assert project.settings_attr == "vertex_project_id"
+    assert project.section_id == "providers"
+    assert project.secret is False
+    assert location.settings_attr == "vertex_location"
+    assert location.default == "global"
+
+
+def test_vertex_admin_status_uses_project_configuration_not_an_api_key() -> None:
+    from free_claude_code.config.admin.status import provider_config_status
+
+    def vertex_status(project_id: str) -> dict[str, object]:
+        statuses = provider_config_status(
+            {
+                "VERTEX_PROJECT_ID": {"value": project_id},
+                "VERTEX_LOCATION": {"value": "global"},
+            }
+        )
+        return next(status for status in statuses if status["provider_id"] == "vertex")
+
+    assert vertex_status("")["status"] == "missing_config"
+    assert vertex_status("")["label"] == "Missing configuration"
+    assert vertex_status("")["configuration"] == "VERTEX_PROJECT_ID"
+    assert vertex_status("vertex-project")["status"] == "configured"
